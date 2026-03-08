@@ -1,77 +1,64 @@
 import ctypes
-import os
 from pathlib import Path
 from django.http import JsonResponse
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 
-# 1. DEFINE THE DIRECTORY (Fixes the NameError)
-# This finds the 'engine' folder where this views.py file lives
+# 1. DEFINE DIRECTORY & PATH
 MODULE_DIR = Path(__file__).resolve().parent
-
-# 2. LOCATE THE SHARED LIBRARY
-# This points to the .so file inside your 'login' sub-folder
 lib_path = str(MODULE_DIR / "login" / "distance_engine.so")
 
-# 3. DEFINE THE "CONTRACT" STRUCT
-# This must match the Go struct exactly to handle results and errors safely
+# 2. DEFINE CONTRACT (The Go Struct)
 class DistanceResult(ctypes.Structure):
     _fields_ = [
         ("Value", ctypes.c_double),
-        ("ErrorMessage", ctypes.c_char_p) # Maps to Go's *C.char
+        ("ErrorMessage", ctypes.c_char_p)
     ]
 
-# 4. LOAD THE LIBRARY
+# 3. LOAD LIBRARY (Initialize once on startup)
 try:
     lib = ctypes.CDLL(lib_path)
-    
-    # Define the Go function's input and output types
-    lib.CalculateDistance.argtypes = [
-        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double
-    ]
+    lib.CalculateDistance.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
     lib.CalculateDistance.restype = DistanceResult
-
 except OSError as e:
-    # This prevents the server from crashing if the .so is missing, 
-    # instead it logs the error to your console.
-    print(f"\n--- CRITICAL ENGINE ERROR ---")
-    print(f"Could not find Go library at: {lib_path}")
-    print(f"Check if the file is in engine/login/distance_engine.so")
-    print(f"-----------------------------\n")
     lib = None
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated]) # The Gatekeeper
 def calculate_view(request):
     """
-    API Endpoint: /api/calculate/?lat1=6.5&lon1=3.3&lat2=9.0&lon2=8.6
+    API: /api/calculate/?lat1=X&lon1=Y&lat2=A&lon2=B
     """
     if lib is None:
+        return JsonResponse({"status": "error", "message": "Go Engine unavailable"}, status=500)
+
+    # 4. INPUT VALIDATION
+    # We check if keys exist before converting them
+    params = ['lat1', 'lon1', 'lat2', 'lon2']
+    try:
+        data = {p: float(request.GET.get(p)) for p in params}
+    except (TypeError, ValueError):
         return JsonResponse({
             "status": "error", 
-            "message": "Go Engine not loaded. Check server logs."
-        }, status=500)
+            "message": f"Missing or invalid parameters. Expected: {params}"
+        }, status=400)
 
-    try:
-        # Get coordinates from the URL parameters
-        lat1 = float(request.GET.get('lat1', 0))
-        lon1 = float(request.GET.get('lon1', 0))
-        lat2 = float(request.GET.get('lat2', 0))
-        lon2 = float(request.GET.get('lon2', 0))
+    # 5. EXECUTE GO LOGIC
+    go_response = lib.CalculateDistance(
+        data['lat1'], data['lon1'], data['lat2'], data['lon2']
+    )
 
-        # 5. CALL THE GO ENGINE
-        # This calls the high-performance Go logic
-        go_response = lib.CalculateDistance(lat1, lon1, lat2, lon2)
+    # 6. ERROR HANDLING
+    if go_response.ErrorMessage:
+        error_msg = go_response.ErrorMessage.decode('utf-8')
+        return JsonResponse({"status": "error", "message": error_msg}, status=400)
 
-        # 6. HANDLE ERRORS FROM GO
-        if go_response.ErrorMessage:
-            error_msg = go_response.ErrorMessage.decode('utf-8')
-            return JsonResponse({"status": "error", "message": error_msg}, status=400)
-
-        # 7. RETURN THE RESULT
-        return JsonResponse({
-            "status": "success",
-            "runtime": "Polyglot (Django + Go Shared Library)",
+    # 7. SUCCESS RESPONSE
+    return JsonResponse({
+        "status": "success",
+        "data": {
+            "lat1": data['lat1'],
+            "lon1": data['lon1'],
             "distance_km": round(go_response.Value, 2)
-        })
-
-    except ValueError:
-        return JsonResponse({"status": "error", "message": "Invalid coordinates"}, status=400)
-    except Exception as e:
-        return JsonResponse({"status": "error", "message": str(e)}, status=500)
+        }
+    })
