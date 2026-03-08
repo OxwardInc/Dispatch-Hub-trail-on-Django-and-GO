@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head><title>Dispatch Hub Pro</title></head>
+<body>
+    <div id="auth">
+        <input id="u" placeholder="Username"><input id="p" type="password"><button onclick="login()">Login</button>
+    </div>
+
+    <div id="app" style="display:none;">
+        <h3>My ID: <span id="myId"></span></h3>
+        <input id="target" placeholder="Target User ID">
+        <hr>
+        <div id="chat" style="height:150px; border:1px solid; overflow:auto;"></div>
+        <input id="text"><button onclick="sendChat()">Send Msg</button>
+        <button id="callBtn" onclick="startCall()" style="background:green; color:white;">Voice Call</button>
+        <button id="hangupBtn" onclick="hangup()" style="display:none; background:red; color:white;">Hang Up</button>
+        <audio id="remoteAudio" autoplay></audio>
+    </div>
+
+    <script>
+        let ws, myId, pc, localStream;
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+        // ... (login function remains the same as yours) ...
+
+        function setupPC(targetId) {
+            pc = new RTCPeerConnection(config);
+            pc.onicecandidate = e => e.candidate && ws.send(JSON.stringify({type:'candidate', target_id:targetId, data:e.candidate}));
+            pc.ontrack = e => document.getElementById('remoteAudio').srcObject = e.streams[0];
+            return pc;
+        }
+
+        async function startCall() {
+            localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+            pc = setupPC(document.getElementById('target').value);
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+            
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            ws.send(JSON.stringify({type:'offer', target_id:document.getElementById('target').value, data:offer}));
+            
+            toggleUI(true);
+        }
+
+        async function handleOffer(msg) {
+            localStream = await navigator.mediaDevices.getUserMedia({audio:true});
+            pc = setupPC(msg.sender_id);
+            localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+            
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.data));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({type:'answer', target_id:msg.sender_id, data:answer}));
+            
+            toggleUI(true);
+        }
+
+        function hangup() {
+            if (pc) pc.close();
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            toggleUI(false);
+            ws.send(JSON.stringify({type:'hangup', target_id:document.getElementById('target').value}));
+        }
+
+        function toggleUI(inCall) {
+            document.getElementById('callBtn').style.display = inCall ? 'none' : 'inline';
+            document.getElementById('hangupBtn').style.display = inCall ? 'inline' : 'none';
+        }
+
+        // Add this to your ws.onmessage
+        // if (msg.type === 'hangup') hangup();
+    </script>
+</body>
+</html>

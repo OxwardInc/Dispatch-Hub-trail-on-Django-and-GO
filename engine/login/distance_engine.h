@@ -19,6 +19,16 @@ typedef struct { const char *p; ptrdiff_t n; } _GoString_;
 /* Start of preamble from import "C" comments.  */
 
 
+#line 3 "engine.go"
+
+#include <stdlib.h>
+// 1. Define the struct in C so Go knows exactly how to export it
+typedef struct {
+    double Value;
+    char* ErrorMessage;
+} DistanceResult;
+
+#line 1 "cgo-generated-wrapper"
 
 
 /* End of preamble from import "C" comments.  */
@@ -74,7 +84,8 @@ typedef struct { void *data; GoInt len; GoInt cap; } GoSlice;
 extern "C" {
 #endif
 
-extern GoFloat64 CalculateDistance(GoFloat64 lat1, GoFloat64 lon1, GoFloat64 lat2, GoFloat64 lon2);
+extern DistanceResult CalculateDistance(GoFloat64 lat1, GoFloat64 lon1, GoFloat64 lat2, GoFloat64 lon2);
+extern void FreeString(char* s);
 
 #ifdef __cplusplus
 }
